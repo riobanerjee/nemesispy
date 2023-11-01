@@ -241,6 +241,48 @@ class ForwardModel():
             T_model, VMR_model, path_angle, solspec)
 
         return point_spectrum
+    
+        def calc_transm_spectrum(self, P_model, T_model, VMR_model,
+        path_angle, Ptop, power, solspec=[], ray_on=True):
+        """
+        Calculate average layer properties from model inputs,
+        then compute the transmission spectrum.
+        Uses the hydrostatic balance equation to calculate layer height.
+        """
+
+        NPRO = len(P_model)
+        mmw = np.zeros(P_model.shape)
+
+        for ipro in range(NPRO):
+            mmw[ipro] = calc_mmw(self.gas_id_list,VMR_model[ipro,:])
+        
+        # H_model = calc_hydrostat(P=P_model, T=T_model, mmw=mmw,
+        #     M_plt=self.M_plt, R_plt=self.R_plt)
+        H_model = calc_hydrostat_guillot(P=P_model, T=T_model, mmw=mmw,
+            M_plt=self.M_plt, R_plt=self.R_plt)
+        
+        if H_model[0] == -999:
+            print("Hydrostatic balance failed")
+            return self.wave_grid, -999*np.ones(len(self.wave_grid))
+
+        H_layer,H_base,P_layer,P_base,T_layer,VMR_layer,U_layer,dH,scale \
+            = calc_layer_transm(
+            self.R_plt, H_model, P_model, T_model, VMR_model,
+            self.gas_id_list, self.NLAYER, path_angle, layer_type=1,
+            H_0=0.0
+            )
+
+        if len(solspec)==0:
+            solspec = np.ones(len(self.wave_grid))
+
+        transm_spectrum = calc_transm(self.wave_grid, H_layer,H_base, U_layer, P_layer, P_base,T_layer,
+            VMR_layer, self.k_gas_w_g_p_t, self.k_table_P_grid,
+            self.k_table_T_grid, self.del_g, ScalingFactor=scale,
+            R_plt=self.R_plt, R_star=self.R_star, solspec=solspec, k_cia=self.k_cia_pair_t_w,
+            ID=self.gas_id_list,cia_nu_grid=self.cia_nu_grid,
+            cia_T_grid=self.cia_T_grid, dH=dH, mmw=mmw, Ptop=Ptop, power=power, ray_on=ray_on)
+                
+        return transm_spectrum
 
     def calc_disc_spectrum(self,phase,nmu,P_model,
         global_model_P_grid,global_T_model,global_VMR_model,

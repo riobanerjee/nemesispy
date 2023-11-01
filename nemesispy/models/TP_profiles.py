@@ -104,3 +104,19 @@ def TP_Line(P,g_plt,T_eq,k_IR,gamma1,gamma2,alpha,beta,T_int):
     flux3 = T_irr**4 * alpha * xi2
     TP = (flux1+flux2+flux3)**0.25
     return TP
+
+def TP_Line_new(P,g_plt,T_eq,k,g1,g2,alpha,beta,T_int):
+    kappa = 10**k
+    gamma1 = 10**g1
+    gamma2 = 10**g2
+    T_irr = beta * T_eq
+    tau = kappa * P / g_plt
+    xi1 = (2./3.) * ( 1 + (1/gamma1)*(1+(0.5*gamma1*tau-1)*np.exp(-gamma1*tau))\
+            + gamma1 * (1-0.5*tau**2) * special.expn(2, gamma1*tau) )
+    xi2 = (2./3.) * ( 1 + (1/gamma2)*(1+(0.5*gamma2*tau-1)*np.exp(-gamma2*tau))\
+            + gamma2 * (1-0.5*tau**2) * special.expn(2, gamma2*tau) )
+    flux1 = (0.75 * T_int**4) * ((2./3.)+tau)
+    flux2 = (0.75 * T_irr**4) * (1-alpha) * xi1
+    flux3 = (0.75 * T_irr**4) * alpha * xi2
+    TP = (flux1+flux2+flux3)**0.25
+    return TP

@@ -17,6 +17,137 @@ from nemesispy.radtran.calc_tau_cia import calc_tau_cia
 from nemesispy.radtran.calc_tau_rayleigh import calc_tau_rayleigh
 
 @jit(nopython=True)
+def calc_transm(wave_grid, H_layer, H_base, U_layer, P_layer,P_base, T_layer, VMR_layer,
+    k_gas_w_g_p_t, P_grid, T_grid, del_g, ScalingFactor, R_plt, R_star, solspec,
+    k_cia, ID, cia_nu_grid, cia_T_grid, dH, mmw, Ptop, power, ray_on=True):
+    """
+    Calculate transmission spectrum using the correlated-k method.
+
+    Parameters
+    ----------
+    wave_grid(NWAVE) : ndarray
+        Wavelengths (um) grid for calculating spectra.
+    H_layer(NLAYER) : ndarray
+        Height of each layer.
+        Unit: m
+    U_layer(NLAYER) : ndarray
+        Surface density of gas particles in each layer.
+        Unit: no. of particle/m^2
+    P_layer(NLAYER) : ndarray
+        Atmospheric pressure grid.
+        Unit: Pa
+    T_layer(NLAYER) : ndarray
+        Atmospheric temperature grid.
+        Unit: K
+    VMR_layer(NLAYER,NGAS) : ndarray
+        Array of volume mixing ratios for NGAS.
+        Has dimensioin: NLAYER x NGAS
+    k_gas_w_g_p_t(NGAS,NWAVE,NG,NPRESSK,NTEMPK) : ndarray
+        k-coefficients.
+        Has dimension: NGAS x NWAVE x NG x NPRESSK x NTEMPK.
+    P_grid(NPRESSK) : ndarray
+        Pressure grid on which the k-coeff's are pre-computed.
+        We want SI unit (Pa) here.
+    T_grid(NTEMPK) : ndarray
+        Temperature grid on which the k-coeffs are pre-computed. In Kelvin
+    del_g : ndarray
+        Quadrature weights of the g-ordinates.
+    ScalingFactor(NLAYER) : ndarray
+        Scale stuff to line of sight
+    R_plt : real
+        Planetary radius
+        Unit: m
+    solspec : ndarray
+        Stellar spectra, used when the unit of the output is in fraction
+        of stellar irradiance.
+
+        Stellar flux at planet's distance (W cm-2 um-1 or W cm-2 (cm-1)-1)
+
+    Returns
+    -------
+    spectrum : ndarray
+        Output spectrum (W cm-2 um-1 sr-1)
+    """
+    NGAS, NWAVE, NG, NPRESS, NTEMP = k_gas_w_g_p_t.shape
+    NLAYER = len(P_layer)
+
+    # Initiate arrays to record total optical paths
+    tau_total_w_g_l = np.zeros((NWAVE,NG,NLAYER))
+    # Collision induced absorptioin optical path (NWAVE x NLAYER)
+    tau_cia = calc_tau_cia(wave_grid=wave_grid,K_CIA=k_cia,ISPACE=1,
+        ID=ID,TOTAM=U_layer,T_layer=T_layer,P_layer=P_layer,VMR_layer=VMR_layer,
+        DELH=dH,cia_nu_grid=cia_nu_grid,TEMPS=cia_T_grid,INORMAL=1,NPAIR=9)
+    
+    # Rayleigh scattering optical path (NWAVE x NLAYER)
+    tau_rayleigh = calc_tau_rayleigh(wave_grid=wave_grid,U_layer=U_layer)
+
+    # FORTRAN straight transcript
+    tau_gas = calc_tau_gas(k_gas_w_g_p_t, P_layer, T_layer, VMR_layer, U_layer,
+        P_grid, T_grid, del_g)
+    
+    # Cloud optical path (NWAVE x NLAYER)
+    tau_cloud = calc_tau_cloud(wave_grid, P_layer, T_layer, mmw, Ptop, power)
+
+    # Values 1.0 if on, 0.0 if off
+    cia_on = 1.0 # CO2 CIA?
+    gas_on = 1.0
+    rayleigh_on = 1.0 # Need CO2 Rayleigh scattering
+    if ray_on == False:
+        rayleigh_on = 0.0
+    cloud_on = 1.0
+
+    # Merge all different opacities
+    for iwave in range(NWAVE):
+        for ig in range(NG):
+            for ilayer in range(NLAYER):
+                tau_total_w_g_l[iwave,ig,ilayer] = rayleigh_on * tau_rayleigh[iwave,ilayer] \
+                    + gas_on * tau_gas[iwave,ig,ilayer] \
+                    + cia_on * tau_cia[iwave,ilayer] \
+                    + cloud_on * tau_cloud[iwave,ilayer]
+
+    # Create list of atmospheric paths for transit geometry
+    paths = []
+    NPATH = NLAYER
+    for ipath in range(NPATH):
+        path = list(range(NPATH-1, NPATH-ipath-2, -1))\
+        + list(range(NPATH-ipath-1, NPATH, 1))
+        paths.append(path)
+    paths = paths[::-1]
+
+
+    y1 = np.zeros((NPATH, NWAVE))
+    area = np.zeros(NWAVE)
+    for ipath in range(NPATH):
+
+        tau_cum_w_g = np.zeros((NWAVE,NG))
+        h_pathbase = R_plt + H_base[ipath]
+
+        for iwave in range(NWAVE):
+            for ig in range(NG):
+                for ilayer, layer_id in enumerate(paths[ipath]):
+                    # Scale to the line-of-sight opacities
+                    tau_cum_w_g[iwave,ig] =  tau_cum_w_g[iwave,ig] + \
+                    tau_total_w_g_l[iwave,ig,layer_id]*ScalingFactor[ipath, ilayer]
+                  
+        tr_w_g = 1.0 - np.exp(-tau_cum_w_g)
+        tr_w = np.zeros(NWAVE)
+
+        for iwave in range(NWAVE):
+            for ig in range(NG):
+                tr_w[iwave] = tr_w[iwave] + tr_w_g[iwave, ig] * del_g[ig]
+        y1[ipath] = 2 * np.pi * h_pathbase * tr_w
+        
+    for ipath in range(NPATH-1):
+        area = area + 0.5 * (y1[ipath+1] + y1[ipath]) * dH[ipath]
+    
+    area_star = np.pi * R_star**2
+    area_plt_bottom = np.pi * (R_plt + H_base[0])**2
+    td_percent = 100.0 * (area + area_plt_bottom)/area_star
+
+    return td_percent
+
+
+@jit(nopython=True)
 def calc_radiance(wave_grid, U_layer, P_layer, T_layer, VMR_layer,
     k_gas_w_g_p_t, P_grid, T_grid, del_g, ScalingFactor, R_plt, solspec,
     k_cia, ID, cia_nu_grid, cia_T_grid, dH):

@@ -291,6 +291,181 @@ def average(planet_radius, H_model, P_model, T_model, VMR_model, ID, H_base,
 
     return H_layer,P_layer,T_layer,VMR_layer,U_layer,dH,scale
 
+@jit(nopython=True)
+def average_transm(planet_radius, H_model, P_model, T_model, VMR_model, ID,
+         H_base, P_base, path_angle, H_0=0.0):
+    """
+    Calculates absorber-amount-weighted average layer properties of an
+    atmosphere.
+
+    Inputs
+    ------
+    planet_radius : real
+        Reference planetary planet_radius where H_model is set to be 0.  Usually
+        set at surface for terrestrial planets, or at 1 bar pressure level for
+        gas giants.
+    H_model(NMODEL) : ndarray
+        Altitudes at which the atmospheric model is defined.
+        (At altitude H_model[i] the pressure is P_model[i].)
+        Unit: m
+    P_model(NMODEL) : ndarray
+        Pressures at which the atmospheric model is defined.
+        (At altitude P_model[i] the pressure is H_model[i].)
+        Unit: Pa
+    T_mode(NMODEL) : ndarray
+        Temperature profile defined in the atmospheric model.
+    ID : ndarray
+        Gas identifiers.
+    VMR_model(NMODEL,NGAS) : ndarray
+        Volume mixing ratios of gases defined in the atmospheric model.
+        VMR_model[i,j] is Volume Mixing Ratio of jth gas at ith profile point.
+        The jth column corresponds to the gas with RADTRANS ID ID[j].
+    H_base(NLAYER) : ndarray
+        Heights of the layer bases.
+    path_angle : real
+        Zenith angle in degrees defined at H_0.
+    H_0 : real, default 0.0
+        Altitude of the lowest point in the atmospheric model.
+        This is defined with respect to the reference planetary radius, i.e.
+        the altitude at planet_radius is 0.
+    NSIMPS : int, optional
+        Number of Simpson's integration points to be used if integration_type=1.
+        The default is 101.
+
+    Returns
+    -------
+    H_layer(NLAYER) : ndarray
+        Representative height for each layer
+        Unit: m
+    P_layer(NLAYER) : ndarray
+        Representative pressure for each layer
+        Unit: Pa
+    T_layer(NLAYER) : ndarray
+        Representative pressure for each layer
+        Unit: Kelven
+    U_layer(NLAYER) : ndarray
+        Total gaseous absorber amounts along the line-of-sight path, i.e.
+        total number of gas molecules per unit area.
+        Unit: no of absorber per m^2
+    VMR_layer(NLAYER, NGAS) : ndarray
+        Representative partial pressure for each gas at each layer.
+        VMR_layer[i,j] is representative partial pressure of gas j in layer i.
+    Gas_layer(NLAYER, NGAS) : ndarray
+        Representative absorber amounts of each gas at each layer.
+        Gas_layer[i,j] is the representative number of gas j molecules
+        in layer i in the form of number of molecules per unit area.
+        Unit: no of absorber per m^2
+    scale(NLAYER) : ndarray
+        Layer scaling factor, i.e. ratio of path length through each layer
+        to the layer thickness.
+    dS(NLAYER) : ndarray
+        Path lengths.
+        Unit: m
+
+    Notes
+    -----
+    Assume SI units.
+    """
+    # Number of integration points for layer integrated properties
+    NSIMPS=101
+
+    # Calculate layer geometric properties
+    paths = []
+    NLAYER = len(H_base)
+    NPATH = NLAYER
+    for ipath in range(NPATH):
+        path = list(range(NPATH-1, NPATH-ipath-2, -1))\
+		  + list(range(NPATH-ipath-1, NPATH, 1))
+        paths.append(path)
+    paths = paths[::-1]
+    new_var = np.array([H_model[-1]-H_base[-1]])
+    dH = np.concatenate(((H_base[1:]-H_base[:-1]), new_var))
+    r0 = planet_radius + H_0 # minimum radial distance
+    rmax = planet_radius + H_model[-1] # maximum radial distance
+    sin = 1.0
+    cos = 0.0 # vertical path for U_layer
+    S_max = np.sqrt(rmax**2-(r0*sin)**2)-r0*cos # total path length
+    S_base = np.sqrt((planet_radius+H_base)**2-(r0*sin)**2)-r0*cos # path lengths at base of layer
+    
+    # initiate output arrays
+    Ngas = len(VMR_model[0])
+
+    sf = np.zeros((NPATH, 2*NPATH))
+
+    for ipath in range(NPATH):
+        z0 = planet_radius + H_base[min(paths[ipath])]
+        for ilayer, layer_id in enumerate(paths[ipath]):
+
+            s_tmp = (planet_radius + H_base[layer_id])**2 - z0**2
+            if s_tmp < 0:
+                s_tmp = 0.0
+            s0 = np.sqrt(s_tmp)
+            s1 = 0.0
+            if layer_id == max(paths[ipath]):
+                s1 = np.sqrt((planet_radius + H_model[-1])**2 - z0**2)
+                sf[ipath, ilayer] = (s1-s0)/(H_model[-1]-H_base[layer_id])
+            else:
+                s1 = np.sqrt((planet_radius + H_base[layer_id+1])**2 - z0**2)
+                sf[ipath, ilayer] = (s1-s0)/(H_base[layer_id+1]-H_base[layer_id])
+
+    # print('sf', sf)
+    # H_layer = np.zeros(NLAYER) # average layer height
+    # P_layer = np.zeros(NLAYER) # average layer pressure
+    # T_layer = np.zeros(NLAYER) # average layer temperature
+    U_layer = np.zeros(NLAYER) # total no. of gas molecules per unit aera
+    # VMR_layer = np.zeros((NLAYER, Ngas)) # partial pressures
+
+    # Calculate average properties depending on intergration type
+    # use absorber-amount-weighted averages calculated with Simpsons rule
+    z0 = planet_radius + H_base[0]
+    for ilayer in range(NLAYER-1,-1,-1):
+
+        s_tmp = (planet_radius + H_base[ilayer])**2 - z0**2
+        if s_tmp < 0:
+            s_tmp = 0.0
+        s0 = np.sqrt(s_tmp)
+        h0 = H_base[ilayer]
+        s1 = 0.0
+        if ilayer == NLAYER-1:
+            s1 = np.sqrt((planet_radius + H_model[-1])**2 - z0**2)
+            h1 = H_model[-1]
+        else:
+            s1 = np.sqrt((planet_radius + H_base[ilayer+1])**2 - z0**2)
+            h1 = H_base[ilayer+1]
+
+        # print('s0', s0/1e3)
+        # print('s1', s1/1e3)
+    # for ilayer in range(NLAYER):
+    #     S0 = S_base[ilayer]
+    #     if ilayer < NLAYER-1:
+    #         S1 = S_base[ilayer+1]
+    #     else:
+    #         S1 = S_max
+
+        S = 0.5*(s0 + s1)
+        h_fort = np.sqrt(S**2 + z0**2) - planet_radius
+        # print('S', S/1e3)
+        # print('h_fort', h_fort/1e3)
+        p_fort = np.interp(h_fort, H_model, P_model)
+        duds = p_fort/(1.380649e-23 * T_model[ilayer])
+        totam = duds*(s1 - s0)        # sub-divide each layer into NSIMPS layers for integration
+        # S_int = np.linspace(s0, s1, NSIMPS)
+        # # H_int = np.sqrt(S_int**2+r0**2+2*S_int*r0*cos)-planet_radius
+        # H_int = np.linspace(h0, h1, NSIMPS)
+        # P_int = np.interp(H_int,H_model,P_model)
+        # T_int = np.interp(H_int,H_model,T_model)
+        # dU_dS_int = 7.34340015e22 * P_int/T_int # ideal gas law P = rho*k*T
+
+        # absorber amount weighted integrals
+        U_layer[ilayer] = totam#simps(dU_dS_int,S_int)
+        # print('U_layer', U_layer[ilayer])
+        U_layer[ilayer] = U_layer[ilayer] / sf[0, NLAYER-1-ilayer]
+        # print('U_layer scaled', U_layer[ilayer])
+        # print('layer', ilayer, 'sf', sf[0, NLAYER-1-ilayer])
+
+
+    return H_model,P_model,T_model,VMR_model,U_layer,dH,sf
+
 # @jit(nopython=True)
 def calc_layer(planet_radius, H_model, P_model, T_model, VMR_model, ID, NLAYER,
     path_angle, H_0=0.0, layer_type=1, custom_path_angle=0.0,
@@ -319,3 +494,33 @@ def calc_layer(planet_radius, H_model, P_model, T_model, VMR_model, ID, NLAYER,
             H_0=H_0)
 
     return H_layer,P_layer,T_layer,VMR_layer,U_layer,dH,scale
+
+
+# @jit(nopython=True)
+def calc_layer_transm(planet_radius, H_model, P_model, T_model, VMR_model, ID, NLAYER,
+    path_angle, H_0=0.0, layer_type=1, custom_path_angle=0.0,
+    custom_H_base=None, custom_P_base=None):
+    """
+    Top level routine that calculates the layer properties from an atmospehric
+    model.
+
+    Parameters
+    ----------
+    cf split, average.
+
+    Returns
+    -------
+    cf average.
+
+    """
+    H_base, P_base = split(H_model, P_model, NLAYER, layer_type=layer_type,
+        H_0=H_0, planet_radius=planet_radius,
+        custom_path_angle=custom_path_angle, custom_H_base=custom_H_base,
+        custom_P_base=custom_P_base)
+
+    H_layer,P_layer,T_layer,VMR_layer,U_layer,dH,scale \
+        = average_transm(planet_radius, H_model, P_model, T_model,
+            VMR_model, ID, H_base, P_base, path_angle=path_angle,
+            H_0=H_0)
+    
+    return H_layer, H_base, P_layer,P_base,T_layer,VMR_layer,U_layer,dH,scale
