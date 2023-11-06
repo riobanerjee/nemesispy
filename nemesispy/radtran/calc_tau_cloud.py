@@ -78,6 +78,9 @@ def calc_tau_cloud(wave_grid, P_layer, T_layer, mmw, Ptop, power, haze_mult=1.0)
     #         tau_cloud[iwave, ilayer] = xsec * rho * Q[iwave, ilayer]
     
 
+# Models from here on are under construction
+g = 1
+k_cloud = 1
 # Models from cloud2con Michiel Min
 def cloud_deck(P_layer, P_deck, phi):
     """

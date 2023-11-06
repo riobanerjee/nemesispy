@@ -17,6 +17,8 @@ from nemesispy.common.interpolate_gcm import interp_gcm
 from nemesispy.common.calc_hydrostat import calc_hydrostat
 from nemesispy.common.get_gas_info import get_gas_id, get_gas_name
 from nemesispy.common.calc_trig_new import disc_weights_new
+from nemesispy.radtran.calc_layer import calc_layer_transm
+from nemesispy.radtran.calc_radiance import calc_transm
 
 
 class ForwardModel():
@@ -59,12 +61,13 @@ class ForwardModel():
         assert self.is_opacity_data_set
 
     def set_planet_model(self, M_plt, R_plt, gas_id_list, iso_id_list, NLAYER,
-        semi_major_axis=None):
+        semi_major_axis=None, R_star=None):
         """
         Store the planetary system parameters
         """
         self.M_plt = M_plt
         self.R_plt = R_plt
+        self.R_star = R_star
         gas_name_list = []
         for index, id in enumerate(gas_id_list):
             gas_name_list.append(get_gas_name(id))
@@ -105,7 +108,7 @@ class ForwardModel():
         NLAYER = input_dict['NLAYER']
         # P_range = input_dict['P_range']
         # T_star = input_dict['T_star']
-        # R_star = input_dict['R_star']
+        R_star = input_dict['R_star']
         # SMA = input_dict['SMA']
         M_plt = input_dict['M_plt']
         R_plt = input_dict['R_plt']
@@ -242,12 +245,12 @@ class ForwardModel():
 
         return point_spectrum
     
-        def calc_transm_spectrum(self, P_model, T_model, VMR_model,
+    def calc_transm_spectrum(self, P_model, T_model, VMR_model,
         path_angle, Ptop, power, solspec=[], ray_on=True):
         """
-        Calculate average layer properties from model inputs,
-        then compute the transmission spectrum.
-        Uses the hydrostatic balance equation to calculate layer height.
+            Calculate average layer properties from model inputs,
+            then compute the transmission spectrum.
+            Uses the hydrostatic balance equation to calculate layer height.
         """
 
         NPRO = len(P_model)
@@ -256,10 +259,10 @@ class ForwardModel():
         for ipro in range(NPRO):
             mmw[ipro] = calc_mmw(self.gas_id_list,VMR_model[ipro,:])
         
-        # H_model = calc_hydrostat(P=P_model, T=T_model, mmw=mmw,
-        #     M_plt=self.M_plt, R_plt=self.R_plt)
-        H_model = calc_hydrostat_guillot(P=P_model, T=T_model, mmw=mmw,
+        H_model = calc_hydrostat(P=P_model, T=T_model, mmw=mmw,
             M_plt=self.M_plt, R_plt=self.R_plt)
+        # H_model = calc_hydrostat_guillot(P=P_model, T=T_model, mmw=mmw,
+        #     M_plt=self.M_plt, R_plt=self.R_plt)
         
         if H_model[0] == -999:
             print("Hydrostatic balance failed")

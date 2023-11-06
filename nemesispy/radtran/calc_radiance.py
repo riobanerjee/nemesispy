@@ -15,6 +15,7 @@ from nemesispy.radtran.calc_planck import calc_planck
 from nemesispy.radtran.calc_tau_gas import calc_tau_gas
 from nemesispy.radtran.calc_tau_cia import calc_tau_cia
 from nemesispy.radtran.calc_tau_rayleigh import calc_tau_rayleigh
+from nemesispy.radtran.calc_tau_cloud import calc_tau_cloud
 
 @jit(nopython=True)
 def calc_transm(wave_grid, H_layer, H_base, U_layer, P_layer,P_base, T_layer, VMR_layer,
