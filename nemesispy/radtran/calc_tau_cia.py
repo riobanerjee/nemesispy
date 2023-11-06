@@ -7,6 +7,41 @@ import numpy as np
 from numba import jit
 
 @jit(nopython=True)
+def co2cia(wave_grid):
+    """
+    Calculates CO2-CO2 CIA absorption coefficients.
+    Parameters
+    ----------
+    wave_grid : ndarray
+
+    Returns
+    -------
+    co2cia : ndarray
+        CO2-CO2 CIA absorption coefficients.
+    """
+    # CO2 CIA
+    NWAVE = len(wave_grid)
+    co2cia = np.zeros((NWAVE))
+    for iwave in range(NWAVE):
+        xl = wave_grid[iwave]
+        if 2.15 < xl < 2.55:
+            a_co2 = 4e-8
+        elif 1.7 < xl < 1.76:
+            a_co2 = 6e-9
+        elif 1.25 < xl < 1.35:
+            a_co2 = 1.5e-9
+        elif 1.125 < xl < 1.225:
+            a_co2 = 0.5*(0.31+0.79)*1e-9
+        elif 1.06 < xl < 1.125:
+            a_co2 = 0.5*(0.29+0.67)*1e-9
+        else:
+            a_co2 = 0.0
+        co2cia[iwave] = a_co2
+
+    return co2cia
+
+
+@jit(nopython=True)
 def calc_tau_cia(wave_grid, K_CIA, ISPACE,
     ID, TOTAM, T_layer, P_layer, VMR_layer, DELH,
     cia_nu_grid, TEMPS, INORMAL, NPAIR=9):
@@ -185,8 +220,8 @@ def calc_tau_cia(wave_grid, K_CIA, ISPACE,
             """
             TO BE DONE
             """
-            k_co2 = sum1*0
-            # k_co2 = co2cia(WAVEN)
+            # k_co2 = sum1*0
+            k_co2 = co2cia(WAVEN)
 
             sum1[:] = sum1[:] + k_co2[:] * qco2[ilay] * qco2[ilay]
 
